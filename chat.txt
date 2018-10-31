@@ -1,176 +1,389 @@
 server.c
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <pthread.h>
-
-int sockfd;//������socket
-int fds[100];//�ͻ��˵�socketfd,100��Ԫ�أ�fds[0]~fds[99]
-int size =100 ;//�������ƽ��������ҵ�����Ϊ100����
-char* IP = "192.168.10.143";
-short PORT = 10222;
-typedef struct sockaddr SA;
-
-void init(){
-    sockfd = socket(PF_INET,SOCK_STREAM,0);
-    if (sockfd == -1){
-        perror("����socketʧ��");
-        exit(-1);
-    }
-    struct sockaddr_in addr;
-    addr.sin_family = PF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = inet_addr(IP);
-    if (bind(sockfd,(SA*)&addr,sizeof(addr)) == -1){
-        perror("��ʧ��");
-        exit(-1);
-    }
-    if (listen(sockfd,100) == -1){
-        perror("���ü���ʧ��");
-        exit(-1);
-    }
-}
-
-void SendMsgToAll(char* msg){
-    int i;
-    for (i = 0;i < size;i++){
-        if (fds[i] != 0){
-            printf("sendto%d\n",fds[i]);
-            send(fds[i],msg,strlen(msg),0);
-        }
-    }
-}
-
-void* service_thread(void* p){
-    int fd = *(int*)p;
-    printf("pthread = %d\n",fd);
-    while(1){
-        char buf[100] = {};
-        if (recv(fd,buf,sizeof(buf),0) <= 0){
-            int i;
-            for (i = 0;i < size;i++){
-                if (fd == fds[i]){
-                    fds[i] = 0;
-                    break;
-                }
-            }
-                printf("�˳���fd = %dquit\n",fd);
-                pthread_exit((void*)i);
-        }
-        //�ѷ��������ܵ�����Ϣ�������еĿͻ���
-        SendMsgToAll(buf);
-    }
-}
-
-void service(){
-    printf("����������\n");
-    while(1){
-        struct sockaddr_in fromaddr;
-        socklen_t len = sizeof(fromaddr);
-        int fd = accept(sockfd,(SA*)&fromaddr,&len);
-        if (fd == -1){
-            printf("�ͻ������ӳ���...\n");
-            continue;
-        }
-        int i = 0;
-        for (i = 0;i < size;i++){
-            if (fds[i] == 0){
-                //��¼�ͻ��˵�socket
-                fds[i] = fd;
-                printf("fd = %d\n",fd);
-                //�пͻ�������֮�������̸߳��˿ͻ�����
-                pthread_t tid;
-                pthread_create(&tid,0,service_thread,&fd);
-                break;
-            }
-        if (size == i){
-            //���͸��ͻ���˵����������
-            char* str = "�Բ����������Ѿ�����!";
-            send(fd,str,strlen(str),0); 
-            close(fd);
-        }
-        }
-    }
-}
-
-int main(){
-    init();
-    service();
-}
+    #include <WinSock2.h>  
+    #include <process.h>  
+    #include <stdio.h>  
+    #include <stdlib.h>  
+    #include <string.h>  
+    #pragma comment(lib,"ws2_32.lib")  
+      
+    #define SEND_OVER 1                          
+    #define SEND_YET  0                        
+      
+    typedef struct _Client  
+    {  
+        SOCKET sClient;       
+        char buf[128];        
+        char userName[16];    
+        char IP[20];         
+        UINT_PTR flag;       
+        int first;  
+    }Client;  
+      
+    Client g_Client[10] = { 0 };  
+      
+    int  SENDFFFF = 0;  
+    int  Rflag = 0;  
+      
+    SOCKADDR_IN ServerAddr = { 0 };  
+    SOCKADDR_IN ClientAddr = { 0 }; 
+    int iClientAddrLen = sizeof(ClientAddr);  
+    SOCKET g_ServerSocket = INVALID_SOCKET;       
+    SOCKADDR_IN g_ClientAddr = { 0 };            
+    int g_iClientAddrLen = sizeof(g_ClientAddr);  
+    USHORT uPort = 18000;                         
+    unsigned __stdcall ThreadSend(void* param)  
+    {  
+        while(1)  
+        {  
+            if(SENDFFFF==0) continue;  
+            else  
+            {  
+                SOCKET client = INVALID_SOCKET;                 ///创建一个临时套接字来存放要转发的客户端套接字  
+                char temp[128];  
+                memset(temp,0,sizeof(temp));                        ///创建一个临时的数据缓冲区，用来存放接收到的数据  
+                memcpy(temp, g_Client[Rflag].buf, sizeof(temp));  
+                printf("temp = %s\n",temp);  
+                int k = 1;  
+                while(k<=5)  
+                {  
+                    if(k!=Rflag)  
+                    {  
+                         sprintf(g_Client[k].buf, "%s: %s", g_Client[Rflag].userName, temp);///添加一个用户名头  
+                    }  
+                    k++;  
+                }  
+                k=1;  
+                while(k<=5)  
+                {  
+                    if(strlen(temp) != 0&&g_Client[k].sClient!=INVALID_SOCKET&&k!=Rflag)  
+                    {  
+                        int ret = send(g_Client[k].sClient, g_Client[k].buf, strlen(g_Client[k].buf), 0);  
+                        printf("g_Client[k].buf == .............%s\n",g_Client[k].buf);  
+                        if(ret==SOCKET_ERROR) return 1;  
+                    }  
+                    k++;  
+                }  
+                Rflag = 0;  
+                SENDFFFF = 0;  
+            }  
+        }  
+      
+        return 0;  
+    }  
+      
+    unsigned __stdcall THREAD_RECV(SOCKET ClientSocket)  
+    {  
+        int flag = 0;  
+        int u = 1;  
+        while(u<=5)  
+        {  
+            if(g_Client[u].sClient==ClientSocket&&g_Client!=INVALID_SOCKET)  
+            {  
+                flag = u;  
+            }  
+          u++;  
+        }  
+        printf("flag = %d\n",flag);  
+        char temp[80] = {0};  
+        while(1)  
+        {  
+            memset(temp, 0, sizeof(temp));  
+            int ret = recv(ClientSocket, temp, sizeof(temp), 0); ///接收数据  
+            printf("%s\n",temp);  
+            if (ret == SOCKET_ERROR)  
+            {  
+                    printf("ClientSocket=%d  error=%d",ClientSocket,errno);  
+                    //getchar();  
+                    continue;  
+            }  
+      
+                //iStatus = SEND_YET;                                ///设置转发状态为未转发  
+            //flag = client == g_Client[0].sClient ? 1 : 0;        ///这个要设置，否则会出现自己给自己发消息的BUG  
+            int k = 1;  
+            while(k<=5)  
+            {  
+                if(k!=flag&&g_Client[flag].first==1)  
+                    memcpy(g_Client[k].buf, temp, strlen(g_Client[k].buf));  
+                printf("%s\n",g_Client[k].buf);  
+                k++;  
+            }  
+            if(g_Client[flag].first==0)///如果这是第一次传过来的数，说明这是一个用户名，不需要进行转发，将其复制到该相应的用户名当中  
+            {  
+                memcpy(g_Client[flag].userName,temp,sizeof(temp));  
+                g_Client[flag].first = 1;  
+            }  
+            else  
+            {  
+                Rflag = flag;  
+                SENDFFFF = 1; ///开启一个转发线程,flag标记着要转发给哪个客户端  
+            }  
+        }  
+    }  
+    unsigned __stdcall THREAD_ACCEPT(SOCKET ClientSocket)  
+    {  
+      
+        int num = 0;  
+        while(1)  
+        {  
+            num = 0;  
+            int  k = 1;  
+           while(k<=5)  
+           {  
+            if(g_Client[k].sClient!=INVALID_SOCKET)  
+            {  
+                num++;  
+                k++;  
+                continue;  
+            }  
+            else  
+            {  
+                g_Client[k].sClient = accept(ClientSocket, (SOCKADDR*)&g_ClientAddr, &g_iClientAddrLen);  
+                if(g_Client[k].sClient == INVALID_SOCKET)  
+                {  
+                    printf("accept failed with error code: %d\n", WSAGetLastError());  
+                    closesocket(ClientSocket);  
+                    WSACleanup();  
+                    return -1;  
+                }  
+                //int len = recv(g_Client[k].sClient, g_Client[k].userName, 15, 0); ///接收用户名  
+                //g_Client[k].userName[len]=0;  
+                //printf("\nlen = %d\n",len);  
+                printf("Successfuuly got a connection from IP:%s ,Port: %d,UerName: %s\n",inet_ntoa(g_ClientAddr.sin_addr), htons(g_ClientAddr.sin_port), g_Client[k].userName);  
+                //printf("%s\n",g_Client[k].sClient);  
+                printf("k = %d\n",k);  
+                memcpy(g_Client[k].IP, inet_ntoa(g_ClientAddr.sin_addr), sizeof(g_Client[k].IP)); ///记录客户端IP  
+                g_Client[k].flag = g_Client[k].sClient; ///不同的socke有不同UINT_PTR类型的数字来标识  
+                num++;  
+                k++;  
+                break;  
+            }  
+          }  
+          //printf("num = %d\n",num);  
+          if(num>=3)  
+          {  
+              int l =1;  
+              while(l<=5)  
+              {  
+                  if(g_Client[l].sClient!=INVALID_SOCKET)  
+                  {  
+                      _beginthreadex(NULL,0,&THREAD_RECV,g_Client[l].sClient,0,0);  
+                  }  
+                  l++;  
+              }  
+          }  
+      
+      
+        }  
+    }  
+      
+      
+    int main()  
+    {  
+        ///存放套接字信息的结构  
+        WSADATA wsaData = { 0 };  
+        SOCKET ServerSocket = INVALID_SOCKET;///服务端套接字  
+        SOCKET ClientSocket = INVALID_SOCKET;///客户端套接字  
+        int pp = 1;  
+        while(pp<=6)  
+        {  
+            memset(g_Client[pp].buf,0,sizeof(g_Client[pp].buf));  
+            g_Client[pp].first = 0;  
+            memset(g_Client[pp].IP,0,sizeof(g_Client[pp].IP));  
+            g_Client[pp].sClient = INVALID_SOCKET;  
+            memset(g_Client[pp].userName,0,sizeof(g_Client[pp].userName));  
+            pp++;  
+        }  
+      
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData))  
+        {  
+            printf("WSAStartup failed with error code: %d\n", WSAGetLastError());  
+            return -1;  
+        }  
+        ///判断版本  
+        if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)  
+        {  
+            printf("wVersion was not 2.2\n");  
+            return -1;  
+        }  
+        ///创建套接字  
+        ServerSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);  
+        if (ServerSocket == INVALID_SOCKET)  
+        {  
+            printf("socket failed with error code: %d\n", WSAGetLastError());  
+            return -1;  
+        }  
+      
+        ///设置服务器地址  
+        ServerAddr.sin_family = AF_INET;///连接方式  
+        ServerAddr.sin_port = htons(uPort);///服务器监听端口  
+        ServerAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);///任何客户端都能连接这个服务器  
+        ///初始化套接字  
+                                                            ///绑定服务器  
+        if (SOCKET_ERROR == bind(ServerSocket, (SOCKADDR*)&ServerAddr, sizeof(ServerAddr)))  
+        {  
+            printf("bind failed with error code: %d\n", WSAGetLastError());  
+            closesocket(ServerSocket);  
+            return -1;  
+        }  
+        ///监听有无客户端连接  
+        if (SOCKET_ERROR == listen(ServerSocket, 1))  
+        {  
+            printf("listen failed with error code: %d\n", WSAGetLastError());  
+            closesocket(ServerSocket);  
+            WSACleanup();  
+            return -1;  
+        }  
+         _beginthreadex(NULL, 0, ThreadSend, NULL,0,NULL);  
+         _beginthreadex(NULL,0,&THREAD_ACCEPT,ServerSocket,NULL,0);  
+         int k = 0;  
+        while(k<100)///让主线程休眠，不让它关闭TCP连接.  
+        {  
+             Sleep(10000000);  
+             k++;  
+        }  
+      
+        ///关闭套接字  
+        int j = 1;  
+        while(j<6)  
+        {  
+            if (g_Client[j].sClient != INVALID_SOCKET)  
+                closesocket(g_Client[j].sClient);  
+            j++;  
+        }  
+        closesocket(g_ServerSocket);  
+        WSACleanup();  
+        return 0;  
+        /* 
+        ClientSocket = accept(ServerSocket, (SOCKADDR*)&ClientAddr, &iClientAddrLen);///accept为阻塞函数 
+        if (ClientSocket == INVALID_SOCKET) 
+        { 
+            printf("accept failed with error code: %d\n", WSAGetLastError()); 
+            closesocket(ServerSocket); 
+            WSACleanup(); 
+            return -1; 
+        } 
+        printf("Successfuuly got a connection from IP:%s Port:%d\n\n\n\n",inet_ntoa(ClientAddr.sin_addr),htons(ClientAddr.sin_port)); 
+     
+    */  
+      
+      
+      
+    }  
 
 
 client.c
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <pthread.h>
-
-int sockfd;//�ͻ���socket
-char* IP = "192.168.10.143";//��������IP
-short PORT = 10222;//����������˿�
-typedef struct sockaddr SA;
-char name[30];
-
-void init(){
-    sockfd = socket(PF_INET,SOCK_STREAM,0);
-    struct sockaddr_in addr;
-    addr.sin_family = PF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = inet_addr(IP);
-    if (connect(sockfd,(SA*)&addr,sizeof(addr)) == -1){
-        perror("�޷����ӵ�������");
-        exit(-1);
-    }
-    printf("�ͻ��������ɹ�\n");
-}
-
-void start(){
-    pthread_t id;
-    void* recv_thread(void*);
-    pthread_create(&id,0,recv_thread,0);
-    char buf2[100] = {};
-    sprintf(buf2,"%s������������",name);
-    send(sockfd,buf2,strlen(buf2),0);
-    while(1){
-        char buf[100] = {};
-        scanf("%s",buf);
-        char msg[131] = {};
-        sprintf(msg,"%s:%s",name,buf);
-        send(sockfd,msg,strlen(msg),0);
-        if (strcmp(buf,"bye") == 0){
-            memset(buf2,0,sizeof(buf2));
-            sprintf(buf2,"%s�˳���������",name);
-            send(sockfd,buf2,strlen(buf2),0);
-            break;
-        }
-    }
-    close(sockfd);
-}
-
-void* recv_thread(void* p){
-    while(1){
-        char buf[100] = {};
-        if (recv(sockfd,buf,sizeof(buf),0) <= 0){
-            return;
-        }
-        printf("%s\n",buf);
-    }
-}
-
-int main(){
-    init();
-    printf("�������������֣�");
-    scanf("%s",name);
-    start();
-    return 0;
-}
+    #include <stdio.h>  
+    #include <winsock2.h>  
+    #include <pthread.h>  
+    #pragma comment(lib,"ws2_32.lib")  
+    char buffer[4096] = {0};  
+    int iRecvLen = 0;  
+    int iSnedLen = 0;  
+    char name[20];  
+    void  THRE_RECV(SOCKET ClientSocket)  
+    {  
+        char buffer[50]={0};  
+        while(1)  
+        {  
+            memset(buffer, 0, sizeof(buffer));///接收消息  
+      
+            iRecvLen = recv(ClientSocket, buffer, sizeof(buffer), 0);  
+            if (SOCKET_ERROR == iRecvLen)  
+            {  
+                printf("send failed with error code: %d\n", WSAGetLastError());  
+                closesocket(ClientSocket);  
+                WSACleanup();  
+                return -1;  
+            }  
+            ///printf("recv %d bytes from %s: ", iRecvLen, nameOther);//为了美观最好不要打印这个了  
+            //strcat(buffer, "\0");  
+            buffer[iRecvLen] = 0;  
+            printf("\n%s\n", buffer);  
+        }  
+    }  
+      
+    int main()  
+    {  
+         WSADATA wsaData = { 0 };///存放套接字信息,WSADATA结构被用来保存AfxSocketInit函数返回的WindowsSockets初始化信息。  
+        SOCKET ClientSocket = INVALID_SOCKET;///客户端套接字  
+        ///printf("%d\n",INVALID_SOCKET);  
+        SOCKADDR_IN ServerAddr = { 0 };///服务端地址  
+        USHORT uPort = 18000;///服务端端口  
+      
+        ///初始化套接字  
+        if(WSAStartup(MAKEWORD(2,2), &wsaData))///该函数的第一个参数指明程序请求使用的Socket版本，其中高位字节指明副版本、低位字节指明主版本  
+        ///第二个参数返回请求的socket版本信息  
+        {  
+            printf("WSAStartup failed with error code: %d\n", WSAGetLastError());  
+            return -1;  
+        }  
+        ///判断套接字版本  
+        if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)  
+        {  
+            printf("wVersion was not 2.2\n");  
+            return -1;  
+        }  
+        ///创建套接字  
+        ClientSocket = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);///AF_INET代表一个地址族,SOCK_STREAM表示为TCP协议的流服务,IPPROTO_TCP的值为6  
+        ///printf("%d\n",IPPROTO_TCP);  
+        if (ClientSocket == INVALID_SOCKET)  
+        {  
+            printf("socket初始化失败并返回错误代码: %d\n", WSAGetLastError());  
+            return -1;  
+        }  
+        ///输入服务器IP  
+        printf("Please input the server's IP:");  
+        char IP[32] = { 0 };  
+        gets(IP);  
+        ///输入聊天的用户名  
+        printf("Please input the Client's username:");  
+        char name[32] = {0};  
+        memset(name,0,sizeof(name));  
+        gets(name);  
+        ///设置服务器地址，填充服务器地址的结构  
+        ServerAddr.sin_family = AF_INET;  
+        ServerAddr.sin_port = htons(uPort);///服务器端口  
+        ServerAddr.sin_addr.S_un.S_addr = inet_addr(IP);///服务器地址  
+      
+        printf("Connecting...........\n");  
+        ///连接服务器  
+        if(SOCKET_ERROR == connect(ClientSocket, (SOCKADDR*)&ServerAddr, sizeof(ServerAddr)))  
+        {  
+            printf("Connect failed with error code: %d \n", WSAGetLastError());  
+            closesocket(ClientSocket);  
+            WSACleanup();  
+            return -1;  
+        }  
+        printf("Successfuuly got a connection from IP:%s Port:%d\n\n\n\n",inet_ntoa(ServerAddr.sin_addr),htons(ServerAddr.sin_port));  
+        _beginthreadex(NULL,0,&THRE_RECV,ClientSocket,NULL,0);  
+        iSnedLen = send(ClientSocket,name,strlen(name),0);  
+        if(SOCKET_ERROR == iSnedLen)  
+        {  
+            printf("send failed with error code: %d\n", WSAGetLastError());  
+            closesocket(ClientSocket);  
+            WSACleanup();  
+            return -1;  
+        }  
+        while(1)  
+        {  
+            memset(buffer, 0, sizeof(buffer));  
+            ///发送消息  
+      
+            gets(buffer);  
+            if(strcmp(buffer,"bye") == 0) break;  
+            printf("%s: ", name);  
+            iSnedLen = send(ClientSocket, buffer, strlen(buffer), 0);  
+            if (SOCKET_ERROR == iSnedLen)  
+            {  
+                printf("send failed with error code: %d\n", WSAGetLastError());  
+                closesocket(ClientSocket);  
+                WSACleanup();  
+                return -1;  
+            }  
+        }  
+        closesocket(ClientSocket);  
+        WSACleanup();  
+        system("pause");  
+        return 0;  
+    }  
