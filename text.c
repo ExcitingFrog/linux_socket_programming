@@ -8,111 +8,164 @@
 #include<signal.h>
 #include<errno.h>
 #include<time.h>
-#define SIZE 1024
+#define LISTENQ 5
+#define MAXLINE 512
+#define MAXMEM 10
+#define NAMELEN 20
 
-int main(int argc, char *argv[])
+int listenfd,connfd[MAXMEM];//åˆ†åˆ«è®°å½•æœåŠ¡å™¨ç«¯çš„å¥—æ¥å­—ä¸è¿æ¥çš„å¤šä¸ªå®¢æˆ·ç«¯çš„å¥—æ¥å­—
+
+void quit();//æœåŠ¡å™¨å…³é—­å‡½æ•°
+void rcv_snd(int n);//æœåŠ¡å™¨æ¥æ”¶å¹¶è½¬å‘æ¶ˆæ¯å‡½æ•°
+
+int main()
 {
-    pid_t pid;
-    int sockfd,confd;
-    char buffer[SIZE],buf[SIZE]; 
-    struct sockaddr_in server_addr;
-    struct sockaddr_in client_addr;
-    struct hostent *host;
-    short port;
-    char *name;  
-    //ËÄ¸ö²ÎÊı
-    if(argc!=4) 
-    { 
-        fprintf(stderr,"Usage:%s hostname \a\n",argv[0]); 
-        exit(1); 
-    } 
-       //Ê¹ÓÃhostname²éÑ¯host Ãû×Ö 
-    if((host=gethostbyname(argv[1]))==NULL) 
-    { 
-        fprintf(stderr,"Gethostname error\n"); 
-        exit(1); 
-    } 
-        port=atoi(argv[2]);
-        name=argv[3];
-       /*¿Í»§³ÌĞò¿ªÊ¼½¨Á¢ sockfdÃèÊö·û */ 
-    if((sockfd=socket(AF_INET,SOCK_STREAM,0))==-1) 
-    { 
-        fprintf(stderr,"Socket Error:%s\a\n",strerror(errno)); 
-        exit(1); 
-    } else{
-        printf("Socket successful!\n");
-    }
-        /*¿Í»§³ÌĞòÌî³ä·şÎñ¶ËµÄ×ÊÁÏ */ 
-    bzero(&server_addr,sizeof(server_addr)); // ³õÊ¼»¯,ÖÃ0
-    server_addr.sin_family=AF_INET;          // IPV4
-    server_addr.sin_port=htons(port);  // (½«±¾»úÆ÷ÉÏµÄshortÊı¾İ×ª»¯ÎªÍøÂçÉÏµÄshortÊı¾İ)¶Ë¿ÚºÅ
-    server_addr.sin_addr=*((struct in_addr *)host->h_addr); // IPµØÖ·
-    /* ¿Í»§³ÌĞò·¢ÆğÁ¬½ÓÇëÇó */ 
-    if(confd=connect(sockfd,(struct sockaddr *)(&server_addr),sizeof(struct sockaddr))==-1) 
-    { 
-        fprintf(stderr,"Connect Error:%s\a\n",strerror(errno)); 
-        exit(1); 
-    }else{
-        printf("Connect successful!\n");
-    }
-    /*½«¿Í»§¶ËµÄÃû×Ö·¢ËÍµ½·şÎñÆ÷¶Ë*/
-    send(sockfd,name,20,0);
-     /*´´½¨×Ó½ø³Ì£¬½øĞĞ¶ÁĞ´²Ù×÷*/
-    pid = fork();//´´½¨×Ó½ø³Ì
-     while(1)
+    pthread_t thread;
+    struct sockaddr_in servaddr,cliaddr;
+    socklen_t len;
+    time_t ticks;
+    char buff[MAXLINE];
+
+//è°ƒç”¨socketå‡½æ•°åˆ›å»ºæœåŠ¡å™¨ç«¯çš„å¥—æ¥å­—
+    printf("Socket...\n");
+    listenfd=socket(AF_INET,SOCK_STREAM,0);
+    if(listenfd<0)
     {
-       /*¸¸½ø³ÌÓÃÓÚ·¢ËÍĞÅÏ¢*/
-           if(pid > 0)
-           {       
-          /*Ê±¼äº¯Êı*/
-           struct tm *p;
-           time(&timep);
-           p = localtime(&timep);
-           strftime(buffer, sizeof(buffer), "%Y/%m/%d %H:%M:%S", p);
-           /*Êä³öÊ±¼äºÍ¿Í»§¶ËµÄÃû×Ö*/
-           strcat(buffer," \n\têÇ³Æ ->");
-           strcat(buffer,name);
-           strcat(buffer,":\n\t\t  ");
-           memset(buf,0,SIZE);
-           fgets(buf,SIZE,stdin);
-       /*¶Ô¿Í»§¶Ë³ÌĞò½øĞĞ¹ÜÀí*/
-           if(strncmp("e",buf,1)==0)
-           {
-             printf("¸Ã¿Í»§¶ËÏÂÏß...\n");
-             strcat(buffer,"ÍË³öÁÄÌìÊÒ£¡");
-             if((send(sockfd,buffer,SIZE,0)) <= 0)
-             {
-               perror("error send");
-             }
-             close(sockfd);
-             sockfd = -1;
-             exit(0);
-           }else 
+        printf("Socket created failed.\n");
+        return -1;
+    }
+
+//è°ƒç”¨bindå‡½æ•°ä½¿å¾—æœåŠ¡å™¨ç«¯çš„å¥—æ¥å­—ä¸åœ°å€å®ç°ç»‘å®š
+    printf("Bind...\n");
+    servaddr.sin_family=AF_INET;
+    servaddr.sin_port=htons(6666);
+    servaddr.sin_addr.s_addr=htonl(INADDR_ANY);
+    if(bind(listenfd,(struct sockaddr*)&servaddr,sizeof(servaddr))<0)
+    {
+        printf("Bind failed.\n");
+        return -1;
+    }
+
+//è°ƒç”¨listenå‡½æ•°ï¼Œå°†ä¸€ä¸ªä¸»åŠ¨è¿æ¥å¥—æ¥å­—å˜ä¸ºè¢«åŠ¨çš„å€¾å¬å¥—æ¥å­—
+//åœ¨æ­¤è¿‡ç¨‹ä¸­å®Œæˆtcpçš„ä¸‰æ¬¡æ¡æ‰‹è¿æ¥
+    printf("listening...\n");
+    listen(listenfd,LISTENQ);
+
+//åˆ›å»ºä¸€ä¸ªçº¿ç¨‹ï¼Œå¯¹æœåŠ¡å™¨ç¨‹åºè¿›è¡Œç®¡ç†ï¼ˆå…³é—­ï¼‰
+    pthread_create(&thread,NULL,(void*)(&quit),NULL);
+
+//è®°å½•ç©ºé—²çš„å®¢æˆ·ç«¯çš„å¥—æ¥å­—æè¿°ç¬¦ï¼ˆ-1ä¸ºç©ºé—²ï¼‰
+    int i=0;
+    for(i=0;i
+    {
+        connfd[i]=-1;
+    }
+
+    while(1)
+    {
+        len=sizeof(cliaddr);
+        for(i=0;i
         {
-            strncat(buffer,buf,strlen(buf)-1);
-            strcat(buffer,"\n");              
-          if((send(sockfd,buffer,SIZE,0)) <= 0)
+            if(connfd[i]==-1)
             {
-                 perror("send");
-            }
-           }
-        }     
-        else if(pid == 0)
-        {
-             /*×Ó½ø³ÌÓÃÓÚ½ÓÊÕĞÅÏ¢*/
-               memset(buffer,0,SIZE);
-               if(sockfd > 0)
-               {
-             if((recv(sockfd,buffer,SIZE,0)) <= 0)
-               {
-                  close(sockfd);
-                  exit(1);
-               }
-               printf("%s\n",buffer);
+                break;
             }
         }
-    }   close(sockfd);
-    return 0;    
+
+//è°ƒç”¨acceptä»listenæ¥å—çš„è¿æ¥é˜Ÿåˆ—ä¸­å–å¾—ä¸€ä¸ªè¿æ¥
+        connfd[i]=accept(listenfd,(struct sockaddr*)&cliaddr,&len);
+
+        ticks=time(NULL);
+        sprintf(buff,"% .24s \r \n",ctime(&ticks));
+        printf("%s Connect from: %s,port %d\n\n",buff,inet_ntoa(cliaddr.sin_addr.s_addr),ntohs(cliaddr.sin_port));
+
+//é’ˆå¯¹å½“å‰å¥—æ¥å­—åˆ›å»ºä¸€ä¸ªçº¿ç¨‹ï¼Œå¯¹å½“å‰å¥—æ¥å­—çš„æ¶ˆæ¯è¿›è¡Œå¤„ç†
+        pthread_create(malloc(sizeof(pthread_t)),NULL,(void*)(&rcv_snd),(void*)i);
+
+    }
+    return 0;
+}
+
+void quit()
+{
+    char msg[10];
+    while(1)
+    {
+        scanf("%s",msg);
+        if(strcmp("quit",msg)==0)
+        {
+            printf("Byebye...\n");
+            close(listenfd);
+            exit(0);
+        }
+    }
+}
+
+void rcv_snd(int n)
+{
+    char* ask="Your name pleaseï¼š";
+    char buff[MAXLINE];
+    char buff1[MAXLINE];
+    char buff2[MAXLINE];
+    char name[NAMELEN];
+    time_t ticks;
+    int i=0;
+    int retval;
+
+//è·å–æ­¤è¿›ç¨‹å¯¹åº”çš„å¥—æ¥å­—ç”¨æˆ·çš„åå­—
+    write(connfd[n],ask,strlen(ask));
+    int len;
+    len=read(connfd[n],name,NAMELEN);
+     if(len>0)
+     {
+         name[len]=0;
+     }
+
+//æŠŠå½“å‰ç”¨æˆ·çš„åŠ å…¥å‘ŠçŸ¥æ‰€æœ‰ç”¨æˆ·
+    strcpy(buff,name);
+    strcat(buff,"\tjoin in\0");
+    for(i=0;i
+    {
+        if(connfd[i]!=-1)
+        {
+            write(connfd[i],buff,strlen(buff));
+        }
+    }
+
+//æ¥å—å½“å‰ç”¨æˆ·çš„ä¿¡æ¯å¹¶å°†å…¶è½¬å‘ç»™æ‰€æœ‰çš„ç”¨æˆ·
+    while(1)
+    {
+        if((len=read(connfd[n],buff1,MAXLINE))>0)
+        {
+            buff1[len]=0;
+
+//å½“å½“å‰ç”¨æˆ·çš„è¾“å…¥ä¿¡æ¯ä¸ºâ€œbyeâ€æ—¶ï¼Œå½“å‰ç”¨æˆ·é€€å‡º
+             if(strcmp("bye",buff)==0)
+             {
+                 close(connfd[n]);
+                 connfd[n]=-1;
+                 pthread_exit(&retval);
+             }
+
+             ticks=time(NULL);
+             sprintf(buff2,"%.24s\r\n",ctime(&ticks));
+             write(connfd,buff2,strlen(buff2));
+
+             strcpy(buff,name);
+             strcat(buff,"\t");
+             strcat(buff,buff2);
+             strcat(buff,buff1);
+
+            for(i=0;i
+            {
+                 if(connfd[i]!=-1)
+                 {
+                      write(connfd[i],buff,strlen(buff));
+                 }
+            }
+        }
+
+    }
 }
 
 
@@ -130,113 +183,79 @@ int main(int argc, char *argv[])
 #include<sys/shm.h>
 #include<time.h>
 #include<pthread.h>
-#define PORT 4395
-#define SIZE 1024
-#define SIZE_SHMADD 2048
-#define BACKLOG 3
+#define MAXLINE 512
+#define NAMELEN 20
+#define PORT 6666
+#define HOST_ADDR "127.0.0.1"
+
 int sockfd;
-int fd[BACKLOG];
-int i=0;
-/*********Ì×½Ó×ÖÃèÊö·û*******/
-int get_sockfd()
-{    struct sockaddr_in server_addr; if((sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)  {    fprintf(stderr,"Socket error:%s\n\a",strerror(errno));          exit(1); }else{
-        printf("Socket successful!\n"); }     /*sockaddr½á¹¹ */ 
-    bzero(&server_addr,sizeof(struct sockaddr_in)); 
-    server_addr.sin_family=AF_INET;                
-    server_addr.sin_addr.s_addr=htonl(INADDR_ANY); 
-    server_addr.sin_port=htons(PORT);  
-    /*°ó¶¨·şÎñÆ÷µÄipºÍ·şÎñÆ÷¶Ë¿ÚºÅ*/
-    if(bind(sockfd,(struct sockaddr *)(&server_addr),sizeof(struct sockaddr))==-1)     
-    {      fprintf(stderr,"Bind error:%s\n\a",strerror(errno));       
-          exit(1);     
-    } else{printf("Bind successful!\n");    }  
-     /* ÉèÖÃÔÊĞíÁ¬½ÓµÄ×î´ó¿Í»§¶ËÊı */     
-     if(listen(sockfd,BACKLOG)==-1)     
-     {    fprintf(stderr,"Listen error:%s\n\a",strerror(errno)); exit(1);  } else{
-          printf("Listening.....\n"); } 
-     return sockfd;
+void snd();
+
+int main()
+{
+    pthread_t thread;
+    struct sockaddr_in servaddr;
+
+//è°ƒç”¨socketå‡½æ•°åˆ›å»ºå®¢æˆ·ç«¯çš„å¥—æ¥å­—
+    sockfd=socket(AF_INET,SOCK_STREAM,0);
+    if(sockfd<0)
+    {
+        printf("Socket create failed\n");
+        return -1;
+    }
+
+//åˆå§‹åŒ–æœåŠ¡å™¨ç«¯çš„åœ°å€
+    servaddr.sin_family=AF_INET;
+    servaddr.sin_port=htons(PORT);
+    if(inet_aton(HOST_ADDR,&servaddr.sin_addr)<0)
+    {
+        printf("inet_aton error.\n");
+        return -1;
+    }
+
+//è°ƒç”¨connectå‡½æ•°å®ç°ä¸æœåŠ¡å™¨ç«¯å»ºç«‹è¿æ¥
+    printf("Connecting...\n");
+    if(connect(sockfd,(struct sockaddr*)&servaddr,sizeof(servaddr))<0)
+    {
+        printf("Connect server failed.\n");
+        return  -1;
+    }
+
+//ä»æ­¤å¤„å¼€å§‹ç¨‹åºåˆ†åšä¸¤ä¸ªçº¿ç¨‹
+
+//åˆ›å»ºå‘é€æ¶ˆæ¯çš„çº¿ç¨‹ï¼Œè°ƒç”¨äº†å‘é€æ¶ˆæ¯çš„å‡½æ•°snd
+    pthread_create(&thread,NULL,(void*)(&snd),NULL);
+
+//ä»æ­¤å¤„å¼€å§‹å‘ä¸‹ä¸ºæ¥æ”¶æ¶ˆæ¯çš„çº¿ç¨‹
+    char buff[MAXLINE];
+    int len;
+
+    while(1)
+    {
+        if((len=read(sockfd,buff,MAXLINE))>0)
+        {
+            buff[len]=0;
+            printf("\n%s\n\n",buff);
+        }
+    }
+
+    return 0;
 }
 
-/*´´½¨¹²Ïí´æ´¢Çø*/
-int shmid_create()
-{    int shmid;     if((shmid = shmget(IPC_PRIVATE,SIZE_SHMADD,0777)) < 0)       { perror("shmid error!"); exit(1); }
-    Else  printf("shmid success!\n");
-    return shmid;
-}
-int main(int argc, char *argv[]) {   char shmadd_buffer[SIZE_SHMADD],buffer[SIZE];      struct sockaddr_in client_addr;  
-    int sin_size;   
-    pid_t ppid,pid;     int new_fd; 
-    int shmid;
-    char *shmadd;
-    /***********¹²ÏíÄÚ´æ**************/
-    shmid = shmid_create();
-    //Ó³Éä¹²ÏíÄÚ´æ
-    shmadd = shmat(shmid, 0, 0);
-    /*****´´½¨Ì×½Ó×ÖÃèÊö·û***********/ 
-    int sockfd = get_sockfd();
-    /*Ñ­»·½ÓÊÕ¿Í»§¶Ë*/
+//å‘é€æ¶ˆæ¯çš„å‡½æ•°snd
+void snd()
+{
+    char name[NAMELEN];
+    char buff[MAXLINE];
+    gets(name);
+    write(sockfd,name,strlen(name));
     while(1)
-    {   /* ·şÎñÆ÷×èÈû,Ö±µ½¿Í»§³ÌĞò½¨Á¢Á¬½Ó */         
-      sin_size=sizeof(struct sockaddr_in);        
-      if((new_fd=accept(sockfd,(struct sockaddr *)(&client_addr),&sin_size))==-1)         
-      { fprintf(stderr,"Accept error:%s\n\a",strerror(errno));  exit1);   }else{printf("Accept successful!\n"); } 
-     fd[i++] = new_fd;    
-     printf("\nÒÑÁ¬½ÓÁË¿Í»§¶Ë%d : %s:%d \n",i , inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-       /*°Ñ½çÃæ·¢ËÍ¸ø¿Í»§¶Ë*/
-     memset(buffer,0,SIZE);
-     strcpy(buffer,"\n¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ªWelecom come char ¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª\n");
-     send(new_fd,buffer,SIZE,0);
-    //´´½¨×Ó½ø³Ì¿Í»§¶Ë
-    ppid = fork();  if(ppid == 0)
     {
-        //½«¼ÓÈëµÄĞÂ¿Í»§·¢ËÍ¸øËùÓĞÔÚÏßµÄ¿Í»§¶Ë/
-       recv(new_fd,buffer,SIZE,0);
-       strcat( buffer," ½øÈëÁËÁÄÌìÊÒ....");  
-       for(i=0;i<BACKLOG;i++)
-       {  
-        if(fd[i]!=-1)
-         {  
-              send(fd[i],buffer,strlen(buffer),0);  
-         }  
-            }   
-        //´´½¨×Ó½ø³Ì½øĞĞ¶ÁĞ´²Ù×÷/
-      pid = fork();    
-       while(1)
-       {
-         if(pid > 0)
-         {
-           //¸¸½ø³ÌÓÃÓÚ½ÓÊÕĞÅÏ¢/
-           memset(buffer,0,SIZE);
-           if((recv(new_fd,buffer,SIZE,0)) <= 0)
-           {
-              close(new_fd);
-              exit(1); }
-            memset(shmadd, 0, SIZE_SHMADD);
-            strncpy(shmadd, buffer, SIZE_SHMADD);//½«»º´æÇøµÄ¿Í»§¶ËĞÅÏ¢·ÅÈë¹²ÏíÄÚ´æÀï
-            printf(" %s\n",buffer);
-         }
-         if(pid == 0)
-         {
-           //×Ó½ø³ÌÓÃÓÚ·¢ËÍĞÅÏ¢/
-           sleep(1);//ÏÈÖ´ĞĞ¸¸½ø³Ì
-           if(strcmp(shmadd_buffer,shmadd) != 0)
-           {
-              strcpy(shmadd_buffer,shmadd);
-              if(new_fd  > 0)
-              {
-                 if(send(new_fd,shmadd,strlen(shmadd),0) == -1)
-                 {
-                   perror("send");
-                 }                
-                 memset(shmadd, 0, SIZE_SHMADD);
-                 strcpy(shmadd,shmadd_buffer);                
-              }
-           }
-         }
-      }
-     } 
-   }    free(buffer);
-   close(new_fd);
-   close(sockfd);
-   return 0;
+        gets(buff);
+        write(sockfd,buff,strlen(buff));
+        if(strcmp("bye",buff)==0)
+        {
+            exit(0);
+        }
+    }
 }
